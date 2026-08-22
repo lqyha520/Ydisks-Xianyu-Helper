@@ -4,6 +4,12 @@ on:
   schedule:
     - cron: '17 */6 * * *'
   workflow_dispatch:
+    inputs:
+      force_deploy:
+        description: '强制构建并部署当前 main（仅手动运维使用）'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -23,9 +29,17 @@ jobs:
         id: merge
         env:
           GH_TOKEN: ${{ github.token }}
+          FORCE_DEPLOY: ${{ inputs.force_deploy || 'false' }}
         shell: bash
         run: |
           set -Eeuo pipefail
+          if [[ "$FORCE_DEPLOY" == "true" ]]; then
+            current="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)"
+            echo "updated=true" >> "$GITHUB_OUTPUT"
+            echo "commit=$current" >> "$GITHUB_OUTPUT"
+            echo "Force deploy requested: ${current:0:12}"
+            exit 0
+          fi
           response="$(gh api -X POST "repos/${GITHUB_REPOSITORY}/merge-upstream" -f branch=main)"
           merge_commit="$(jq -r '.merge_commit_sha // empty' <<<"$response")"
           if [[ -n "$merge_commit" ]]; then
