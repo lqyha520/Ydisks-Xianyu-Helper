@@ -66,6 +66,59 @@ jobs:
         with:
           ref: main
 
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Restore Chromium runtime cache
+        id: runtime-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .docker/playwright-runtime/amd64
+          key: ydisks-playwright-runtime-v6-docker-amd64-debian13-x64-${{ hashFiles('go.mod', 'go.sum', 'cmd/browser-install/**') }}
+
+      - name: Prepare Chromium runtime
+        if: steps.runtime-cache.outputs.cache-hit != 'true'
+        env:
+          GOARCH: amd64
+          PLAYWRIGHT_HOST_PLATFORM_OVERRIDE: debian13-x64
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p .docker/playwright-runtime/amd64/playwright-driver \
+            .docker/playwright-runtime/amd64/playwright-browsers
+          GOOS=linux GOARCH="$GOARCH" CGO_ENABLED=0 go build \
+            -trimpath -ldflags='-s -w' \
+            -o "$RUNNER_TEMP/browser-install" ./cmd/browser-install
+          "$RUNNER_TEMP/browser-install" \
+            -driver-dir "$PWD/.docker/playwright-runtime/amd64/playwright-driver" \
+            -browser-dir "$PWD/.docker/playwright-runtime/amd64/playwright-browsers"
+
+      - name: Validate Chromium runtime
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          runtime_dir="$PWD/.docker/playwright-runtime/amd64"
+          test -x "$runtime_dir/playwright-driver/node"
+          test -f "$runtime_dir/playwright-driver/package/cli.js"
+          test -n "$(find "$runtime_dir/playwright-browsers" -type f \
+            \( -name chrome -o -name headless_shell -o -name chrome-headless-shell \) \
+            -perm -111 -print -quit)"
+
+      - name: Save Chromium runtime cache
+        if: steps.runtime-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .docker/playwright-runtime/amd64
+          key: ${{ steps.runtime-cache.outputs.cache-primary-key }}
+
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
 
