@@ -4,12 +4,6 @@ on:
   schedule:
     - cron: '17 */6 * * *'
   workflow_dispatch:
-    inputs:
-      force_deploy:
-        description: '强制构建并部署当前 main（仅手动运维使用）'
-        required: false
-        type: boolean
-        default: false
 
 permissions:
   contents: write
@@ -22,126 +16,51 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     outputs:
-      updated: ${{ steps.merge.outputs.updated }}
-      commit: ${{ steps.merge.outputs.commit }}
+      updated: ${{ steps.sync.outputs.updated }}
+      upstream_sha: ${{ steps.sync.outputs.upstream_sha }}
     steps:
-      - name: Merge upstream main into fork
-        id: merge
+      - name: Checkout fork history
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Check and merge upstream only when changed
+        id: sync
         env:
           GH_TOKEN: ${{ github.token }}
-          FORCE_DEPLOY: ${{ inputs.force_deploy || 'false' }}
         shell: bash
         run: |
           set -Eeuo pipefail
-          if [[ "$FORCE_DEPLOY" == "true" ]]; then
-            current="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)"
-            echo "updated=true" >> "$GITHUB_OUTPUT"
-            echo "commit=$current" >> "$GITHUB_OUTPUT"
-            echo "Force deploy requested: ${current:0:12}"
+          git remote add upstream https://github.com/Christ9038/Ydisks-Xianyu-Helper.git
+          git fetch --no-tags upstream main
+          upstream_sha="$(git rev-parse upstream/main)"
+          echo "upstream_sha=$upstream_sha" >> "$GITHUB_OUTPUT"
+
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "updated=false" >> "$GITHUB_OUTPUT"
+            echo "No upstream change: ${upstream_sha:0:12}"
             exit 0
           fi
 
-          upstream="$(gh api repos/Christ9038/Ydisks-Xianyu-Helper/commits/main --jq .sha)"
-          current="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)"
-          if [[ "$upstream" == "$current" ]]; then
-            echo "updated=false" >> "$GITHUB_OUTPUT"
-            echo "commit=$current" >> "$GITHUB_OUTPUT"
-            echo "No upstream change: ${current:0:12}"
-            exit 0
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/merge-upstream" -f branch=main >/tmp/merge.json
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor upstream/main origin/main; then
+            echo "Fork synchronization did not include upstream ${upstream_sha}" >&2
+            cat /tmp/merge.json >&2
+            exit 1
           fi
 
-          response="$(gh api -X POST "repos/${GITHUB_REPOSITORY}/merge-upstream" -f branch=main)"
-          merge_commit="$(jq -r '.merge_commit_sha // empty' <<<"$response")"
-          if [[ -n "$merge_commit" ]]; then
-            echo "updated=true" >> "$GITHUB_OUTPUT"
-            echo "commit=$merge_commit" >> "$GITHUB_OUTPUT"
-            echo "Upstream changes merged: ${merge_commit:0:12}"
-          else
-            echo "updated=false" >> "$GITHUB_OUTPUT"
-            echo "commit=$current" >> "$GITHUB_OUTPUT"
-            echo "Upstream changed but merge produced no commit; deployment skipped"
-          fi
+          echo "updated=true" >> "$GITHUB_OUTPUT"
+          echo "Upstream synchronized: ${upstream_sha:0:12}"
 
-  build-and-deploy:
+  deploy:
     needs: sync
     if: needs.sync.outputs.updated == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      actions: write
     steps:
-      - name: Checkout synchronized fork
-        uses: actions/checkout@v4
-        with:
-          ref: main
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-
-      - name: Restore Chromium runtime cache
-        id: runtime-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: .docker/playwright-runtime/amd64
-          key: ydisks-playwright-runtime-v6-docker-amd64-debian13-x64-${{ hashFiles('go.mod', 'go.sum', 'cmd/browser-install/**') }}
-
-      - name: Prepare Chromium runtime
-        if: steps.runtime-cache.outputs.cache-hit != 'true'
-        env:
-          GOARCH: amd64
-          PLAYWRIGHT_HOST_PLATFORM_OVERRIDE: debian13-x64
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          mkdir -p .docker/playwright-runtime/amd64/playwright-driver \
-            .docker/playwright-runtime/amd64/playwright-browsers
-          GOOS=linux GOARCH="$GOARCH" CGO_ENABLED=0 go build \
-            -trimpath -ldflags='-s -w' \
-            -o "$RUNNER_TEMP/browser-install" ./cmd/browser-install
-          "$RUNNER_TEMP/browser-install" \
-            -driver-dir "$PWD/.docker/playwright-runtime/amd64/playwright-driver" \
-            -browser-dir "$PWD/.docker/playwright-runtime/amd64/playwright-browsers"
-
-      - name: Validate Chromium runtime
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          runtime_dir="$PWD/.docker/playwright-runtime/amd64"
-          test -x "$runtime_dir/playwright-driver/node"
-          test -f "$runtime_dir/playwright-driver/package/cli.js"
-          test -n "$(find "$runtime_dir/playwright-browsers" -type f \
-            \( -name chrome -o -name headless_shell -o -name chrome-headless-shell \) \
-            -perm -111 -print -quit)"
-
-      - name: Save Chromium runtime cache
-        if: steps.runtime-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: .docker/playwright-runtime/amd64
-          key: ${{ steps.runtime-cache.outputs.cache-primary-key }}
-
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build application image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: Dockerfile.debian13
-          load: true
-          push: false
-          tags: ydisks-xianyu-helper:${{ needs.sync.outputs.commit }}
-          cache-from: type=gha,scope=ydisks-xianyu-helper
-          cache-to: type=gha,mode=max,scope=ydisks-xianyu-helper
-
       - name: Configure SSH
         uses: webfactory/ssh-agent@v0.9.0
         with:
@@ -157,22 +76,31 @@ jobs:
           printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
-      - name: Stream image to server
-        shell: bash
+      - name: Wait for upstream image
         env:
-          IMAGE: ydisks-xianyu-helper:${{ needs.sync.outputs.commit }}
+          IMAGE: ghcr.io/christ9038/ydisks-xianyu-helper:sha-${{ needs.sync.outputs.upstream_sha }}
+        shell: bash
         run: |
           set -Eeuo pipefail
-          docker save "$IMAGE" | gzip -1 | ssh -p 20007 root@43.248.3.158 'gunzip | docker load'
+          for attempt in $(seq 1 30); do
+            if docker manifest inspect "$IMAGE" >/dev/null 2>&1; then
+              echo "Image is ready: $IMAGE"
+              exit 0
+            fi
+            echo "Waiting for upstream image ($attempt/30)..."
+            sleep 60
+          done
+          echo "Timed out waiting for $IMAGE" >&2
+          exit 1
 
-      - name: Deploy and verify
-        shell: bash
+      - name: Deploy exact upstream revision
         env:
-          IMAGE: ydisks-xianyu-helper:${{ needs.sync.outputs.commit }}
+          IMAGE: ghcr.io/christ9038/ydisks-xianyu-helper:sha-${{ needs.sync.outputs.upstream_sha }}
+        shell: bash
         run: |
           set -Eeuo pipefail
           ssh -p 20007 root@43.248.3.158 \
-            "XIANYU_SKIP_PULL=1 /usr/local/sbin/update-ydisks-xianyu-helper '$IMAGE'"
+            "/usr/local/sbin/update-ydisks-xianyu-helper '$IMAGE'"
           curl --fail --silent --show-error --max-time 20 \
             http://43.248.3.158:25777/health
           echo
