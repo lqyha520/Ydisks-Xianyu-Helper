@@ -22,11 +22,12 @@ Zap,
 import React,{ useEffect,useMemo,useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AutomationIssuePanel } from '../components/AutomationIssuePanel';
+import TemplateVariantEditor from '../components/TemplateVariantEditor';
 import { useRulesData } from '../hooks';
 import { filterAutomationIssues } from '../issueState';
 import { useRuleActions } from '../ruleActions';
 import type { AutomationTriggerType,RulesProps,RulesTab } from '../types';
-import { accentClasses,accountLabel,actionSummary,adjustPriceTarget,buildReviewConfig,cardActionsForTrigger,statusPill,triggerMeta,triggerOrder } from '../utils';
+import { accentClasses,accountLabel,actionSummary,adjustPriceTarget,buildReviewConfig,cardActionsForTrigger,isDeliveryCardReady,statusPill,triggerMeta,triggerOrder } from '../utils';
 
 // Rules 是规则 feature 在旧页面目录下保留的兼容入口组件。
 const Rules: React.FC<RulesProps> = ({ initialDeliveryTarget, onDeliveryTargetHandled }) => {
@@ -68,6 +69,7 @@ const Rules: React.FC<RulesProps> = ({ initialDeliveryTarget, onDeliveryTargetHa
     accounts,
     cards,
     items,
+    deliveryTemplates,
     loading,
     setLoading,
     automationTotal,
@@ -89,6 +91,7 @@ const Rules: React.FC<RulesProps> = ({ initialDeliveryTarget, onDeliveryTargetHa
     setSelectedAccountId,
     setActiveTab,
     items,
+    deliveryTemplates,
     setAutomationRules,
     setCards,
     setItems,
@@ -119,10 +122,6 @@ const Rules: React.FC<RulesProps> = ({ initialDeliveryTarget, onDeliveryTargetHa
 	}, 300);
 	return /* 当前回调处理用户交互或异步状态变化。 */ () => window.clearTimeout(timer);
   }, [automationSearch]);
-
-  useEffect(/* 当前回调处理异步操作结果。 */ () => {
-	void loadReferenceData().catch(/* 当前回调处理异步操作结果。 */ error => console.error('加载规则参考数据失败', error));
-  }, [loadReferenceData]);
 
   useEffect(/* 当前回调处理异步操作结果。 */ () => {
 	void refresh().catch(/* 当前回调处理异步操作结果。 */ error => console.error('刷新规则页面失败', error));
@@ -626,7 +625,7 @@ const Rules: React.FC<RulesProps> = ({ initialDeliveryTarget, onDeliveryTargetHa
               </button>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] min-h-0">
+            <div className="grid min-w-0 grid-cols-1 lg:grid-cols-[minmax(0,320px)_minmax(0,1fr)] min-h-0">
               <aside className="bg-slate-900 text-white p-5 overflow-y-auto">
                 <div className="text-xs font-bold text-slate-400 mb-3">选择自动化类型</div>
                 <div className="space-y-3">
@@ -671,7 +670,7 @@ const Rules: React.FC<RulesProps> = ({ initialDeliveryTarget, onDeliveryTargetHa
                 </div>
               </aside>
 
-              <div className="p-6 overflow-y-auto bg-surface-subtle">
+              <div className="min-w-0 overflow-x-hidden overflow-y-auto bg-surface-subtle p-6">
                 <div className="space-y-5">
                   <section className="bg-white rounded-3xl border border-gray-100 p-5">
                     <div className="flex items-center gap-2 mb-4">
@@ -803,43 +802,58 @@ const Rules: React.FC<RulesProps> = ({ initialDeliveryTarget, onDeliveryTargetHa
                         {displayVariants.map((variant, index) => (/* 当前回调处理集合中的单个元素。 */
                           <div
                             key={variant.id || index}
-                            className={`grid grid-cols-1 gap-3 items-end rounded-2xl border border-gray-200 p-4 ${isMultiSpecRule ? 'md:grid-cols-[1fr_1fr_1.4fr_110px_40px]' : 'md:grid-cols-[1.4fr_110px_40px]'}`}
+                            className={`grid min-w-0 grid-cols-1 gap-3 items-end rounded-2xl border border-gray-200 p-4 ${isMultiSpecRule ? 'md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.4fr)_110px_40px]' : 'md:grid-cols-[minmax(0,1.4fr)_110px_40px]'}`}
                           >
                             {isMultiSpecRule && (
                               <>
                                 <div>
-                                  <label className="block text-xs font-bold text-gray-600 mb-2">规格名称</label>
+                                  <label className="block text-xs font-bold text-gray-600 mb-2">规格名称（多 SKU 用；连接）</label>
                                   <input
                                     value={variant.spec_name}
                                     onChange={/* 当前回调处理用户交互或异步状态变化。 */ event => updateVariant(index, { spec_name: event.target.value })}
                                     className="w-full ios-input px-3 py-2.5 rounded-lg"
-                                    placeholder="例如：套餐"
+                                    placeholder="例如：颜色；尺码"
                                   />
                                 </div>
                                 <div>
-                                  <label className="block text-xs font-bold text-gray-600 mb-2">规格值</label>
+                                  <label className="block text-xs font-bold text-gray-600 mb-2">规格值（按同顺序填写）</label>
                                   <input
                                     value={variant.spec_value}
                                     onChange={/* 当前回调处理用户交互或异步状态变化。 */ event => updateVariant(index, { spec_value: event.target.value })}
                                     className="w-full ios-input px-3 py-2.5 rounded-lg"
-                                    placeholder="例如：30天"
+                                    placeholder="例如：红色；M"
                                   />
                                 </div>
                               </>
                             )}
                             <div>
-                              <label className="block text-xs font-bold text-gray-600 mb-2">卡密库存</label>
+                              <label className="block text-xs font-bold text-gray-600 mb-2">发货方式</label>
                               <select
-                                value={variant.card_id || ''}
-                                onChange={/* 当前回调处理用户交互或异步状态变化。 */ event => updateVariant(index, { card_id: Number(event.target.value) })}
+                                value={variant.delivery_mode || 'card'}
+                                onChange={/* 当前回调切换卡密库存和模板两种发货模式。 */ event => updateVariant(index, { delivery_mode: event.target.value as 'card' | 'template', card_id: 0, delivery_template_id: 0, template_bindings: [] })}
                                 className="w-full ios-input px-3 py-2.5 rounded-lg"
                               >
-                                <option value="">请选择卡密库存</option>
-                                {cards.filter(/* 当前回调处理集合中的单个元素。 */ card => card.enabled && (card.type !== 'api' || card.api_config?.ready === true)).map(/* 当前回调处理集合中的单个元素。 */ card => (
-                                  <option key={card.id} value={card.id}>{card.name}</option>
-                                ))}
+                                <option value="card">卡密库存</option>
+                                <option value="template">发货模板</option>
                               </select>
                             </div>
+                            {variant.delivery_mode === 'template' ? (
+                              <TemplateVariantEditor index={index} variant={variant} cards={cards} deliveryTemplates={deliveryTemplates} updateVariant={updateVariant} />
+                            ) : (
+                              <div>
+                                <label className="block text-xs font-bold text-gray-600 mb-2">卡密库存</label>
+                                <select
+                                  value={variant.card_id || ''}
+                                  onChange={/* 当前回调选择卡密库存。 */ event => updateVariant(index, { card_id: Number(event.target.value) })}
+                                  className="w-full ios-input px-3 py-2.5 rounded-lg"
+                                >
+                                  <option value="">请选择卡密库存</option>
+                                  {cards.filter(isDeliveryCardReady).map(/* 当前回调处理集合中的单个元素。 */ card => (
+                                    <option key={card.id} value={card.id}>{card.name}</option>
+                                  ))}
+                                </select>
+                              </div>
+                            )}
                             <div>
                               <label className="block text-xs font-bold text-gray-600 mb-2">每件份数</label>
                               <input
@@ -975,7 +989,8 @@ const Rules: React.FC<RulesProps> = ({ initialDeliveryTarget, onDeliveryTargetHa
                       <label className="h-[48px] flex items-center gap-3 px-4 bg-gray-50 rounded-xl text-sm font-bold text-gray-800">
                         <input
                           type="checkbox"
-                          checked={editingAutomationRule.enabled !== false}
+                          checked={editingAutomationRule.sku_migration_status !== 'needs_reconfiguration' && editingAutomationRule.enabled !== false}
+                          disabled={editingAutomationRule.sku_migration_status === 'needs_reconfiguration'}
                           onChange={/* 当前回调处理用户交互或异步状态变化。 */ event => setEditingAutomationRule({ ...editingAutomationRule, enabled: event.target.checked })}
                           className="w-4 h-4 rounded"
                         />

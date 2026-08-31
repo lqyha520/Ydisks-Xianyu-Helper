@@ -3,6 +3,7 @@ import type {
 AccountDetail,
 AutomationAction,
 AutomationTriggerType,
+Card,
 ShippingRule,
 ShippingVariant,
 } from './api';
@@ -59,7 +60,28 @@ export const emptyVariant = (): ShippingVariant => ({
   enabled: true,
   delay_override: false,
   delay_seconds: 0,
+  delivery_mode: 'card',
+  delivery_template_id: 0,
+  template_bindings: [],
+  custom_variables: {},
 });
+
+// isDeliveryCardReady 判断卡密是否启用，并确保 API 卡密配置已达到自动化发货要求。
+export const isDeliveryCardReady = (card: Card): boolean => card.enabled && (card.type !== 'api' || card.api_config?.ready === true);
+
+// hasCompleteTemplateBindings 判断模板声明的卡密变量与当前绑定是否一一对应。
+export const hasCompleteTemplateBindings = (templateKeys: string[], bindings?: ShippingVariant['template_bindings']): boolean => {
+  if (templateKeys.length !== (bindings || []).length) return false;
+  // expected 保存模板声明的变量键集合。
+  const expected = new Set(templateKeys);
+  // seen 保存已处理的绑定键，避免重复绑定通过校验。
+  const seen = new Set<string>();
+  for (const /* binding 表示当前模板变量到库存的绑定。 */ binding of bindings || []) {
+    if (!expected.has(binding.variable_key) || seen.has(binding.variable_key) || binding.card_id <= 0) return false;
+    seen.add(binding.variable_key);
+  }
+  return seen.size === expected.size;
+};
 
 // parseJSONObject 安全解析规则配置 JSON，异常或非对象值统一返回空对象。
 export const parseJSONObject = (raw?: string): Record<string, any> => {
@@ -173,15 +195,15 @@ export const actionSummary = (rule: ShippingRule) => {
       action => action.action_type === 'send_text',
     )?.message_template || '发送求评价文案';
   }
-  // cards 是当前规则中的卡密动作列表。
+  // cards 是当前规则中的卡密或模板动作列表。
   const cards = (rule.actions || []).filter(
-    // 卡密动作筛选器只保留发送卡片类型。
-    action => action.action_type === 'send_card',
+    // 卡密动作筛选器保留两种可发货动作。
+    action => action.action_type === 'send_card' || action.action_type === 'send_template',
   );
   if (!cards.length) return '未配置卡密库存';
   return cards.map(
-    // 卡密动作格式化器优先展示库存名称。
-    action => action.card_name || `卡密 ${action.card_id}`,
+    // 卡密动作格式化器优先展示模板名称或库存名称。
+    action => action.action_type === 'send_template' ? action.delivery_template_name || `模板 ${action.delivery_template_id}` : action.card_name || `卡密 ${action.card_id}`,
   ).join(' / ');
 };
 

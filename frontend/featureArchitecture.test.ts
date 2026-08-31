@@ -65,6 +65,7 @@ const canonicalPageEntrypoints = [
   'app/features/cards/pages/CardList.tsx',
   'app/features/chat/pages/Chat.tsx',
   'app/features/dashboard/pages/Dashboard.tsx',
+  'app/features/delivery-templates/pages/DeliveryTemplates.tsx',
   'app/features/items/pages/ItemList.tsx',
   'app/features/notifications/pages/Notifications.tsx',
   'app/features/orders/pages/OrderList.tsx',
@@ -198,7 +199,7 @@ describe('React feature dependency boundaries', () => {
     // appRootEntries 是 app 目录允许存在的顶层架构职责目录。
     const appRootEntries = ['errors', 'features', 'providers', 'router', 'shell'];
     // actualAppEntries 是当前 app 目录的顶层文件与目录名称。
-    const actualAppEntries = readdirSync(resolve(sourceRoot, 'app')).sort();
+    const actualAppEntries = readdirSync(resolve(sourceRoot, 'app')).filter(/* entry 过滤操作系统生成的隐藏元数据文件，架构目录断言只关注源码目录。 */ entry => !entry.startsWith('.')).sort();
     // appSource 是应用根组件源码，只允许装配错误边界、Provider 和路由。
     const appSource = readFileSync(resolve(sourceRoot, 'App.tsx'), 'utf8');
 

@@ -9,6 +9,8 @@ Card,
 DefaultReply,
 DefaultReplyResponse,
 Item,
+DeliveryTemplate,
+DeliveryTemplateBinding,
 KeywordTypedResponse,
 MutationIDResponse,OperationResponse,
 PaginatedResponse,
@@ -20,6 +22,16 @@ import { contractClient, runContractRequest } from '../../../shared/api-contract
 import { collectionFrom,objectFrom } from '../../../shared/http/contract';
 export type * from './models';
 
+/** 发货模板创建和更新请求体。 */
+interface DeliveryTemplateWritePayload {
+  /** 模板名称。 */
+  name: string;
+  /** 模板是否启用。 */
+  enabled: boolean;
+  /** 模板消息正文列表。 */
+  messages: Array<{ /** 消息正文。 */ content: string }>;
+}
+
 /** 自动化规则筛选器读取非敏感账号摘要。 */
 export const getAccountDetails = async (options?: RequestControlOptions): Promise<AccountDetail[]> => runContractRequest(/* signal 控制规则页账号摘要读取的取消和超时。 */ signal => contractClient.GET('/api/v1/accounts/details', { signal }), options);
 
@@ -28,6 +40,146 @@ export const getCards = async (options?: RequestControlOptions): Promise<Card[]>
 
 /** 自动化规则商品选择器读取商品索引。 */
 export const getItems = async (accountID?: string, options?: RequestControlOptions): Promise<Item[]> => runContractRequest(/* signal 控制规则页商品读取的取消和超时。 */ signal => contractClient.GET('/api/v1/items', { params: { query: { cookie_id: accountID } }, signal }), options) as unknown as Promise<Item[]>;
+
+/** 自动化动作编辑器读取当前用户的发货模板。 */
+export const getDeliveryTemplates = async (options?: RequestControlOptions): Promise<DeliveryTemplate[]> => {
+  // response 保存模板列表接口的成功响应。
+  const response = await runContractRequest(/* signal 控制规则页发货模板读取的取消和超时。 */ signal => contractClient.GET('/api/v1/delivery-templates', { signal }), options);
+  return (response.data || []).map(/* item 是服务端返回的模板 DTO。 */ item => ({ ...item, custom_keys: Array.isArray(item.custom_keys) ? item.custom_keys : [] })) as DeliveryTemplate[];
+};
+
+/** 发货模板编辑器创建模板。 */
+export const createDeliveryTemplate = async (payload: DeliveryTemplateWritePayload): Promise<{ id?: number }> =>
+  runContractRequest(/* signal 控制发货模板创建请求的取消和超时。 */ signal => contractClient.POST('/api/v1/delivery-templates', { body: payload, signal }));
+
+/** 发货模板编辑器更新模板。 */
+export const updateDeliveryTemplate = async (id: number, payload: DeliveryTemplateWritePayload): Promise<{ success: boolean }> =>
+  runContractRequest(/* signal 控制发货模板更新请求的取消和超时。 */ signal => contractClient.PUT('/api/v1/delivery-templates/{template_id}', { params: { path: { template_id: String(id) } }, body: payload, signal }));
+
+/** 发货模板编辑器删除模板。 */
+export const deleteDeliveryTemplate = async (id: number): Promise<{ success: boolean }> =>
+  runContractRequest(/* signal 控制发货模板删除请求的取消和超时。 */ signal => contractClient.DELETE('/api/v1/delivery-templates/{template_id}', { params: { path: { template_id: String(id) } }, signal }));
+/** 动作配置中与规则自定义变量相关的最小读取结构。 */
+interface CustomVariableConfig {
+  /** 传给发货模板的自定义字符串键值表。 */
+  custom_variables?: unknown;
+}
+
+/** 模板绑定请求 DTO，保留请求使用 key、响应使用 variable_key 的契约差异。 */
+interface AutomationTemplateBindingRequestPayload {
+  /** 请求绑定的模板变量键。 */
+  key: string;
+  /** 绑定的卡密库存 ID。 */
+  card_id: number;
+  /** 每件订单取出的卡密数量。 */
+  delivery_count: number;
+}
+
+/** 自动化动作请求的本地 transport DTO，明确模板绑定使用 key 字段。 */
+interface AutomationActionRequestPayload {
+  /** 更新时保留的既有动作 ID；新动作不携带该字段。 */
+  id?: number;
+  /** 动作类型。 */
+  action_type: string;
+  /** 普通卡券动作使用的库存 ID。 */
+  card_id: number;
+  /** 普通卡券动作的发货数量。 */
+  delivery_count: number;
+  /** 文本动作正文。 */
+  message_template: string;
+  /** 动作延迟秒数。 */
+  delay_seconds: number;
+  /** 动作扩展配置 JSON。 */
+  config_json: string;
+  /** 动作是否启用。 */
+  enabled: boolean;
+  /** 动作执行顺序。 */
+  sort_order: number;
+  /** 模板发货动作使用的模板 ID。 */
+  delivery_template_id: number;
+  /** 模板变量绑定请求列表。 */
+  template_bindings: AutomationTemplateBindingRequestPayload[];
+  /** 模板自定义变量键值表。 */
+  custom_variables: Record<string, string>;
+}
+
+/** 自动化规则请求的本地 transport DTO，隔离规则 UI 模型与 OpenAPI 请求字段。 */
+interface AutomationRuleRequestPayload {
+  /** 规则绑定的账号标识。 */
+  cookie_id: string;
+  /** 规则匹配的商品标识。 */
+  item_id: string;
+  /** 规则名称。 */
+  name: string;
+  /** 规则触发类型。 */
+  trigger_type: string;
+  /** 规则是否启用。 */
+  enabled: boolean;
+  /** 规则优先级。 */
+  priority: number;
+  /** 规则扩展配置 JSON。 */
+  config_json: string;
+  /** 规则动作请求列表。 */
+  actions: AutomationActionRequestPayload[];
+}
+
+/** 将自动化规则响应中的模板绑定 DTO 归一为规则页使用的 UI 模型。 */
+const normalizeTemplateBindings = (raw: unknown): DeliveryTemplateBinding[] => {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap(/* item 是服务端返回的单个模板绑定 DTO。 */ item => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
+    // dto 保存经过对象边界检查的服务端模板绑定字段集合。
+    const dto = item as Record<string, unknown>;
+    // variableKey 保存服务端响应中的模板变量键；缺失时丢弃该绑定以避免伪造 UI 状态。
+    const variableKey = typeof dto.variable_key === 'string' ? dto.variable_key : '';
+		// cardID、deliveryCount 保存模板绑定对应的库存主键和每件订单取货份数。
+		const cardID = Number(dto.card_id || 0);
+		// deliveryCount 保存每件订单为该模板变量准备的卡券份数。
+		const deliveryCount = Number(dto.delivery_count || 1);
+    if (!variableKey || !Number.isFinite(cardID) || !Number.isFinite(deliveryCount)) return [];
+    return [{ variable_key: variableKey, card_id: cardID, delivery_count: deliveryCount }];
+  });
+};
+
+/** 将规则页模板绑定 UI 模型序列化为 OpenAPI 请求要求的 key 字段。 */
+const serializeTemplateBindings = (bindings?: DeliveryTemplateBinding[]) =>
+  (bindings || []).map(/* binding 是当前待提交的模板变量绑定 UI 模型。 */ binding => ({
+    key: binding.variable_key,
+    card_id: binding.card_id,
+    delivery_count: binding.delivery_count,
+  }));
+
+// parseCustomVariables 从动作配置中恢复规则页保存的自定义字符串键值表。
+const parseCustomVariables = (raw?: string): Record<string, string> => {
+  // config 保存动作配置 JSON 对象。
+  let config: unknown;
+  try {
+    config = JSON.parse(raw || '{}');
+  } catch {
+    return {};
+  }
+  if (!config || typeof config !== 'object' || Array.isArray(config)) return {};
+  // values 保存配置中的自定义变量候选值。
+  const values = (config as CustomVariableConfig).custom_variables;
+  if (values && typeof values === 'object' && !Array.isArray(values)) {
+    // result 保存经过字符串过滤的自定义变量键值表。
+    const result: Record<string, string> = {};
+    Object.entries(values).forEach(/* entry 保存一个自定义变量键值对，用于拆分和过滤响应字段。 */ entry => {
+      // key 保存当前自定义变量键。
+      const key = entry[0];
+      // value 保存当前自定义变量的字符串候选值。
+      const value = entry[1];
+      if (typeof value === 'string') result[key] = value;
+    });
+    return result;
+  }
+  if (Array.isArray(values)) {
+    // legacyResult 保存历史数组格式转换后的兼容键值表。
+    return Object.fromEntries(values.filter(/* value 是历史数组中的字符串候选值。 */ (value: unknown): value is string => typeof value === 'string').map(/* valueIndex 保存历史数组值及其兼容键名。 */ (value, valueIndex) => [String(valueIndex), value]));
+  }
+  return {};
+};
+
 // Rules - 自动化规则
 const normalizeShippingRules = (rules: any[]): ShippingRule[] => rules.map(/* 当前回调用于处理集合元素或接口响应。 */ (item: any) => ({
         id: String(item.id),
@@ -37,7 +189,7 @@ const normalizeShippingRules = (rules: any[]): ShippingRule[] => rules.map(/* �
         cookie_id: item.cookie_id || '',
         item_id: item.item_id || '',
         item_title: item.item_title || '',
-        card_group_id: Number((item.actions || []).find(/* 当前回调用于处理集合元素或接口响应。 */ (a: any) => a.action_type === 'send_card')?.card_id || 0),
+        card_group_id: Number((item.actions || []).find(/* 当前回调用于处理集合元素或接口响应。 */ (a: any) => a.action_type === 'send_card' || a.action_type === 'send_template')?.card_id || 0),
         card_group_name: (item.actions || []).find(/* 当前回调用于处理集合元素或接口响应。 */ (a: any) => a.action_type === 'send_card')?.card_name || '',
         priority: item.priority || 100,
         enabled: item.enabled || false,
@@ -53,9 +205,14 @@ const normalizeShippingRules = (rules: any[]): ShippingRule[] => rules.map(/* �
           config_json: action.config_json || '{}',
           enabled: action.enabled !== false,
           sort_order: Number(action.sort_order || 0),
+          delivery_template_id: Number(action.delivery_template_id || 0),
+          delivery_template_name: action.delivery_template_name || '',
+          template_keys: Array.isArray(action.template_keys) ? action.template_keys : [],
+          template_bindings: normalizeTemplateBindings(action.template_bindings),
+          custom_variables: action.custom_variables && typeof action.custom_variables === 'object' && !Array.isArray(action.custom_variables) ? action.custom_variables as Record<string, string> : {},
         })),
         variants: (item.actions || [])
-          .filter(/* 当前回调用于处理集合元素或接口响应。 */ (action: any) => action.action_type === 'send_card')
+          .filter(/* 当前回调用于处理集合元素或接口响应。 */ (action: any) => action.action_type === 'send_card' || action.action_type === 'send_template')
           .map(/* 当前回调用于处理集合元素或接口响应。 */ (action: any) => {
             // cfg 动作配置，用于当前 API 处理流程。
             let cfg: any = {};
@@ -71,6 +228,10 @@ const normalizeShippingRules = (rules: any[]): ShippingRule[] => rules.map(/* �
               delay_override: cfg.delay_override === true,
               delay_seconds: Number(action.delay_seconds || 0),
               config_json: action.config_json || '{}',
+              delivery_mode: action.action_type === 'send_template' ? 'template' : 'card',
+              delivery_template_id: Number(action.delivery_template_id || 0),
+              template_bindings: normalizeTemplateBindings(action.template_bindings),
+              custom_variables: parseCustomVariables(action.config_json),
             };
           }),
     }));
@@ -128,15 +289,15 @@ const orderAutomationActions = (triggerType: string, actions: AutomationAction[]
       return actions.map(/* 当前回调用于处理集合元素或接口响应。 */ (action, index) => ({ ...action, sort_order: action.sort_order || index + 1 }));
     }
     // sendCards 发送Cards。
-    const sendCards = actions
-      .filter(/* 当前回调用于处理集合元素或接口响应。 */ action => action.action_type === 'send_card')
+    const deliveryActions = actions
+      .filter(/* 当前回调用于处理集合元素或接口响应。 */ action => action.action_type === 'send_card' || action.action_type === 'send_template')
       .map(/* 当前回调用于处理集合元素或接口响应。 */ (action, index) => ({ ...action, sort_order: index + 1 }));
     // others 其他动作列表，用于当前 API 处理流程。
-    const others = actions.filter(/* 当前回调用于处理集合元素或接口响应。 */ action => action.action_type !== 'send_card' && action.action_type !== 'confirm_shipment');
+    const others = actions.filter(/* 当前回调用于处理集合元素或接口响应。 */ action => action.action_type !== 'send_card' && action.action_type !== 'send_template' && action.action_type !== 'confirm_shipment');
     return [
-      ...sendCards,
-      ...others.map(/* 当前回调用于处理集合元素或接口响应。 */ (action, index) => ({ ...action, sort_order: sendCards.length + index + 1 })),
-      { action_type: 'confirm_shipment' as const, enabled: true, sort_order: sendCards.length + others.length + 1 },
+      ...deliveryActions,
+      ...others.map(/* 当前回调用于处理集合元素或接口响应。 */ (action, index) => ({ ...action, sort_order: deliveryActions.length + index + 1 })),
+      { action_type: 'confirm_shipment' as const, enabled: true, sort_order: deliveryActions.length + others.length + 1 },
     ];
 };
 
@@ -157,20 +318,25 @@ export const updateShippingRule = async (rule: Partial<ShippingRule>): Promise<O
       rule.item_title || rule.item_id || rule.cookie_id || '',
     ].filter(Boolean).join(' - ');
     // preservedNonCardActions 保留的非卡密动作，用于当前 API 处理流程。
-    const preservedNonCardActions = (rule.actions || []).filter(/* 当前回调用于处理集合元素或接口响应。 */ action => action.action_type !== 'send_card' && action.action_type !== 'confirm_shipment');
+    const preservedNonCardActions = (rule.actions || []).filter(/* 当前回调用于处理集合元素或接口响应。 */ action => action.action_type !== 'send_card' && action.action_type !== 'send_template' && action.action_type !== 'confirm_shipment');
     // baseActions 基础动作列表，用于当前 API 处理流程。
     const baseActions: AutomationAction[] = rule.variants && rule.variants.length > 0
       ? [...rule.variants.map(/* 当前回调用于处理集合元素或接口响应。 */ (variant, index) => ({
-            action_type: 'send_card' as const,
+            id: variant.id,
+            action_type: variant.delivery_mode === 'template' ? 'send_template' as const : 'send_card' as const,
             card_id: variant.card_id,
+            delivery_template_id: variant.delivery_template_id,
+            template_bindings: variant.template_bindings,
             delivery_count: variant.delivery_count || 1,
             enabled: variant.enabled !== false,
             sort_order: index + 1,
             delay_seconds: variant.delay_seconds || 0,
+            custom_variables: variant.custom_variables || {},
             config_json: JSON.stringify({
               spec_name: variant.spec_name || '',
               spec_value: variant.spec_value || '',
               delay_override: variant.delay_override === true,
+              custom_variables: variant.custom_variables && typeof variant.custom_variables === 'object' && !Array.isArray(variant.custom_variables) ? variant.custom_variables : {},
             }),
 		  })), ...preservedNonCardActions]
       : (rule.actions && rule.actions.length > 0 ? rule.actions : [{
@@ -183,7 +349,7 @@ export const updateShippingRule = async (rule: Partial<ShippingRule>): Promise<O
     // actions 动作列表，用于当前 API 处理流程。
     const actions = orderAutomationActions(triggerType, baseActions);
     // payload 请求载荷，用于当前 API 处理流程。
-    const payload = {
+    const payload: AutomationRuleRequestPayload = {
         cookie_id: rule.cookie_id || '',
         item_id: rule.item_id || '',
         name: (rule.name || '').trim() || generatedName || '自动化规则',
@@ -192,19 +358,23 @@ export const updateShippingRule = async (rule: Partial<ShippingRule>): Promise<O
         priority: rule.priority || 100,
         config_json: rule.config_json || '{}',
         actions: actions.map(/* 当前回调用于处理集合元素或接口响应。 */ (action, index) => ({
+          id: action.id ? Number(action.id) : undefined,
           action_type: action.action_type,
           card_id: action.card_id || 0,
           delivery_count: action.delivery_count || 1,
           message_template: action.message_template || '',
           delay_seconds: action.delay_seconds || 0,
-          config_json: action.config_json || '{}',
+        config_json: action.config_json || '{}',
           enabled: action.enabled !== false,
           sort_order: action.sort_order || index + 1,
+          delivery_template_id: action.delivery_template_id || 0,
+          template_bindings: serializeTemplateBindings(action.template_bindings),
+          custom_variables: action.custom_variables && typeof action.custom_variables === 'object' && !Array.isArray(action.custom_variables) ? action.custom_variables : {},
         })),
     };
     return rule.id
-      ? runContractRequest(/* signal 控制自动化规则更新请求的取消和超时。 */ signal => contractClient.PUT('/api/v1/automation-rules/{rule_id}', { params: { path: { rule_id: String(rule.id) } }, body: payload as never, signal }))
-      : runContractRequest(/* signal 控制自动化规则创建请求的取消和超时。 */ signal => contractClient.POST('/api/v1/automation-rules', { body: payload as never, signal }));
+      ? runContractRequest(/* signal 控制自动化规则更新请求的取消和超时。 */ signal => contractClient.PUT('/api/v1/automation-rules/{rule_id}', { params: { path: { rule_id: String(rule.id) } }, body: payload, signal }))
+      : runContractRequest(/* signal 控制自动化规则创建请求的取消和超时。 */ signal => contractClient.POST('/api/v1/automation-rules', { body: payload, signal }));
 }
 
 // deleteShippingRule 删除发货规则。

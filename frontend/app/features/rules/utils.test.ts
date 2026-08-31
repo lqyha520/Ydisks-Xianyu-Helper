@@ -11,6 +11,7 @@ buildReviewConfig,
 cardActionsForTrigger,
 defaultRuleName,
 emptyVariant,
+hasCompleteTemplateBindings,
 isValidAdjustPrice,
 parseJSONObject,
 shouldReplaceGeneratedName,
@@ -107,12 +108,24 @@ describe('规则工具函数', /* 当前回调处理规则配置和展示状态�
   });
 
   test('创建空规格并选择账号展示名称', /* 当前回调处理规则配置和展示状态。 */ () => {
-    expect(emptyVariant()).toEqual({ spec_name: '', spec_value: '', card_id: 0, delivery_count: 1, enabled: true, delay_override: false, delay_seconds: 0 });
+    expect(emptyVariant()).toEqual({ spec_name: '', spec_value: '', card_id: 0, delivery_count: 1, enabled: true, delay_override: false, delay_seconds: 0, delivery_mode: 'card', delivery_template_id: 0, template_bindings: [], custom_variables: {} });
     // idOnly 是仅包含平台账号标识的最小账号对象。
     const idOnly = { id: 'account-1' } as AccountDetail;
     expect(accountLabel({ id: 'a', nickname: '昵称' } as AccountDetail)).toBe('昵称');
     expect(accountLabel({ id: 'a', remark: '备注' } as AccountDetail)).toBe('备注');
     expect(accountLabel(idOnly)).toBe('account-1');
     expect(accountLabel()).toBe('未知账号');
+  });
+
+  test('严格校验模板卡密变量绑定，包括零变量模板', /* 当前回调覆盖模板绑定完整性和非法键拒绝。 */ () => {
+    expect(hasCompleteTemplateBindings([], [])).toBe(true);
+    expect(hasCompleteTemplateBindings(['main'], [{ variable_key: 'main', card_id: 1, delivery_count: 1 }])).toBe(true);
+    expect(hasCompleteTemplateBindings(['main'], [])).toBe(false);
+    expect(hasCompleteTemplateBindings(['main'], [{ variable_key: 'main', card_id: 0, delivery_count: 1 }])).toBe(false);
+    expect(hasCompleteTemplateBindings(['main'], [{ variable_key: 'other', card_id: 1, delivery_count: 1 }])).toBe(false);
+    expect(hasCompleteTemplateBindings(['main'], [
+      { variable_key: 'main', card_id: 1, delivery_count: 1 },
+      { variable_key: 'main', card_id: 2, delivery_count: 1 },
+    ])).toBe(false);
   });
 });
