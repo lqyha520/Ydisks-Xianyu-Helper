@@ -802,7 +802,7 @@ const Rules: React.FC<RulesProps> = ({ initialDeliveryTarget, onDeliveryTargetHa
                         {displayVariants.map((variant, index) => (/* 当前回调处理集合中的单个元素。 */
                           <div
                             key={variant.id || index}
-                            className={`grid min-w-0 grid-cols-1 gap-3 items-end rounded-2xl border border-gray-200 p-4 ${isMultiSpecRule ? 'md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.4fr)_110px_40px]' : 'md:grid-cols-[minmax(0,1.4fr)_110px_40px]'}`}
+                            className={`rules-delivery-grid grid min-w-0 grid-cols-1 gap-3 items-end rounded-2xl border border-gray-200 p-4 ${isMultiSpecRule ? 'rules-delivery-grid-multi' : ''}`}
                           >
                             {isMultiSpecRule && (
                               <>
