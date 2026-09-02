@@ -43,6 +43,22 @@ jobs:
             exit 0
           fi
 
+          base_sha="$(git merge-base HEAD upstream/main)"
+          commit_count="$(git rev-list --count "$base_sha..$upstream_sha")"
+          commits="$(git log --no-merges --pretty=format:'- %h %s' "$base_sha..$upstream_sha" | head -n 15)"
+          file_stats="$(git diff --stat "$base_sha..$upstream_sha" | tail -n 1)"
+          {
+            echo "COMMIT_COUNT<<SUMMARY_EOF"
+            echo "$commit_count"
+            echo "SUMMARY_EOF"
+            echo "COMMITS<<SUMMARY_EOF"
+            echo "$commits"
+            echo "SUMMARY_EOF"
+            echo "FILE_STATS<<SUMMARY_EOF"
+            echo "$file_stats"
+            echo "SUMMARY_EOF"
+          } >> "$GITHUB_OUTPUT"
+
           gh api -X POST "repos/${GITHUB_REPOSITORY}/merge-upstream" -f branch=main >/tmp/merge.json
           git fetch --no-tags origin main
           if ! git merge-base --is-ancestor upstream/main origin/main; then
@@ -114,6 +130,9 @@ jobs:
         env:
           FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
           UPSTREAM_SHA: ${{ needs.sync.outputs.upstream_sha }}
+          COMMIT_COUNT: ${{ needs.sync.outputs.COMMIT_COUNT }}
+          COMMITS: ${{ needs.sync.outputs.COMMITS }}
+          FILE_STATS: ${{ needs.sync.outputs.FILE_STATS }}
           DEPLOY_RESULT: ${{ needs.deploy.result }}
         shell: bash
         run: |
@@ -125,7 +144,9 @@ jobs:
             title="⚠️ 闲鱼助手更新部署异常"
             detail="上游 ${UPSTREAM_SHA:0:12} 已合并，但部署结果: $DEPLOY_RESULT，请检查 Actions 日志。"
           fi
-          message=$(printf '%s\n\n%s' "$title" "$detail")
+          message=$(printf '%s\n\n%s\n\n📦 本次更新内容（%s 个提交）：\n%s\n\n%s\n\n查看完整差异: https://github.com/Christ9038/Ydisks-Xianyu-Helper/compare/%s...%s' \
+            "$title" "$detail" "$COMMIT_COUNT" "$COMMITS" "$FILE_STATS" \
+            "${UPSTREAM_SHA:0:12}" "${UPSTREAM_SHA:0:12}")
           body=$(jq -nc --arg text "$message" '{msg_type:"text",content:{text:$text}}')
           curl --fail-with-body --silent --show-error -X POST \
             -H 'Content-Type: application/json' \
