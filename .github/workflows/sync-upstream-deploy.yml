@@ -104,3 +104,36 @@ jobs:
           curl --fail --silent --show-error --max-time 20 \
             http://43.248.3.161:33402/health
           echo
+
+  notify:
+    runs-on: ubuntu-latest
+    needs: [sync, deploy]
+    if: always() && needs.sync.outputs.updated == 'true'
+    steps:
+      - name: Send Feishu notification
+        env:
+          FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          FEISHU_RECEIVE_ID: ${{ secrets.FEISHU_RECEIVE_ID }}
+          UPSTREAM_SHA: ${{ needs.sync.outputs.upstream_sha }}
+          DEPLOY_RESULT: ${{ needs.deploy.result }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [ "$DEPLOY_RESULT" = "success" ]; then
+            title="✅ 闲鱼助手已更新部署"
+            detail="上游新版本 ${UPSTREAM_SHA:0:12} 已合并并部署到服务器，健康检查通过。"
+          else
+            title="⚠️ 闲鱼助手更新部署异常"
+            detail="上游 ${UPSTREAM_SHA:0:12} 已合并，但部署结果: $DEPLOY_RESULT，请检查 Actions 日志。"
+          fi
+          auth_body=$(jq -nc --arg app_id "$FEISHU_APP_ID" --arg app_secret "$FEISHU_APP_SECRET" '{app_id:$app_id,app_secret:$app_secret}')
+          token=$(curl --fail-with-body --silent --show-error -X POST -H 'Content-Type: application/json' \
+            -d "$auth_body" https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal | jq -r '.tenant_access_token')
+          message=$(printf '%s\n\n%s' "$title" "$detail")
+          content=$(jq -nc --arg text "$message" '{text:$text}')
+          body=$(jq -nc --arg receive_id "$FEISHU_RECEIVE_ID" --arg content "$content" \
+            '{receive_id:$receive_id,msg_type:"text",content:$content}')
+          curl --fail-with-body --silent --show-error -X POST \
+            -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
+            -d "$body" 'https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id'
