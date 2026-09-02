@@ -112,9 +112,7 @@ jobs:
     steps:
       - name: Send Feishu notification
         env:
-          FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
-          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
-          FEISHU_RECEIVE_ID: ${{ secrets.FEISHU_RECEIVE_ID }}
+          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
           UPSTREAM_SHA: ${{ needs.sync.outputs.upstream_sha }}
           DEPLOY_RESULT: ${{ needs.deploy.result }}
         shell: bash
@@ -127,13 +125,8 @@ jobs:
             title="⚠️ 闲鱼助手更新部署异常"
             detail="上游 ${UPSTREAM_SHA:0:12} 已合并，但部署结果: $DEPLOY_RESULT，请检查 Actions 日志。"
           fi
-          auth_body=$(jq -nc --arg app_id "$FEISHU_APP_ID" --arg app_secret "$FEISHU_APP_SECRET" '{app_id:$app_id,app_secret:$app_secret}')
-          token=$(curl --fail-with-body --silent --show-error -X POST -H 'Content-Type: application/json' \
-            -d "$auth_body" https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal | jq -r '.tenant_access_token')
           message=$(printf '%s\n\n%s' "$title" "$detail")
-          content=$(jq -nc --arg text "$message" '{text:$text}')
-          body=$(jq -nc --arg receive_id "$FEISHU_RECEIVE_ID" --arg content "$content" \
-            '{receive_id:$receive_id,msg_type:"text",content:$content}')
+          body=$(jq -nc --arg text "$message" '{msg_type:"text",content:{text:$text}}')
           curl --fail-with-body --silent --show-error -X POST \
-            -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
-            -d "$body" 'https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id'
+            -H 'Content-Type: application/json' \
+            -d "$body" "$FEISHU_WEBHOOK"
