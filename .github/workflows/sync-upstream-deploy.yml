@@ -2,7 +2,7 @@ name: Sync upstream and deploy
 
 on:
   schedule:
-    - cron: '17 */6 * * *'
+    - cron: '0 19 * * *'
   workflow_dispatch:
 
 permissions:
@@ -99,8 +99,8 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          ssh -p 20007 root@43.248.3.158 \
+          ssh -p 20072 root@43.248.3.161 \
             "/usr/local/sbin/update-ydisks-xianyu-helper '$IMAGE'"
           curl --fail --silent --show-error --max-time 20 \
-            http://43.248.3.158:25777/health
+            http://43.248.3.161:33402/health
           echo
